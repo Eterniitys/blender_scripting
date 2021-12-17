@@ -11,6 +11,51 @@ bpy.context.object.rigid_body.restitution = 0.8"""
 
 object_list = []
 
+class Bubble():
+    velocity : tuple[int, int, int]
+    
+    def __init__(self, radius : int, pos : tuple[int,int,int]):
+        bpy.ops.mesh.primitive_uv_sphere_add()
+        bpy.ops.rigidbody.object_add()
+        self.model = bpy.context.object
+        
+        self.model.location = bpy.context.scene.cursor.location
+        self.model.location[0] += pos[0]
+        self.model.location[1] += pos[1]
+        self.model.location[2] += pos[2]
+        
+        self.model.scale = [radius, radius, radius]
+    
+    def set_pos(self, pos : tuple[int,int,int]):
+        self.model.location[0] += pos[0]
+        self.model.location[1] += pos[1]
+        self.model.location[2] += pos[2]
+        
+    def set_radius(self, radius):
+        self.model.scale = [radius, radius, radius]
+    
+    def set_color(self, color):
+        self.model.color = color
+        
+    def isToClose(self, bubble):
+        s1_x = self.model.location[0]
+        s1_y = self.model.location[1]
+        s1_z = self.model.location[2]
+        s2_x = bubble.model.location[0]
+        s2_y = bubble.model.location[1]
+        s2_z = bubble.model.location[2]
+        return(sqrt((s1_x-s2_x)**2 + (s1_y-s2_y)**2 + (s1_z-s2_z)**2) < self.model.scale[0] + bubble.model.scale[0])
+    
+    def computePos(self):
+        pass
+
+    def delete(self):
+        bpy.data.objects.remove(self.model)
+        
+
+        
+        
+
 def createBubble(count, maxRadius, maxRange):
 
     for i in range(count):    
@@ -25,77 +70,44 @@ def createBubble(count, maxRadius, maxRange):
 def generateGrowingBubble(maxRadius, maxRange, lstBubble = []):
     _maxTry = 200
     _inc = 0
-    sphere = genBubble(maxRadius, maxRange)
+    sphere = placeBubble(maxRadius, maxRange)
     if len(lstBubble) != 0 :
         isValide = False
         while not isValide and _inc < _maxTry:
             isValide = True
-            _suppressed_bubble = []
             for bubble in lstBubble:
-                try:
-                    if isToClose(bubble, sphere):
-                        isValide = False
-                        sphere = genBubble(maxRadius, maxRange, sphere)
-                        _inc += 1
-                        break
-                except ReferenceError as e:
-                    _suppressed_bubble.append(bubble)
-            for b in _suppressed_bubble:
-                lstBubble.remove(b)
-
-    sphere.color = ((sphere.scale[0]-1)/maxRadius, 0, 1 - (sphere.scale[0]-1)/maxRadius, 1)
+                if sphere.isToClose(bubble):
+                    isValide = False
+                    sphere = placeBubble(maxRadius, maxRange, sphere)
+                    _inc += 1
+                    
+    r = (sphere.model.scale[0] - 1) / maxRadius
+    b = 1 - (sphere.model.scale[0] - 1) / maxRadius
+    sphere.set_color((r, 0, b, 1))
     if _inc >= _maxTry:
         bpy.ops.object.delete()
         sphere = None
     return sphere
 
-def genBubble(maxRadius, maxRange, bubble = None):
-    if bubble == None :
-        bpy.ops.mesh.primitive_uv_sphere_add()
-        bpy.ops.rigidbody.object_add()
-        bubble = bpy.context.object
-        
-    bubble.rigid_body.restitution = 0.7
-
+def placeBubble(maxRadius, maxRange, bubble = None):
     _radius = rd.random()*(maxRadius-1)+1
     _angle = rd.random()*2*pi
     _dist = rd.random()*maxRange
     _x = sin(_angle)*_dist
     _y = cos(_angle)*_dist
     
-    bubble.location = bpy.context.scene.cursor.location
-
-    bubble.location[0] += _x
-    bubble.location[1] += _y
-    bubble.location[2] -= _radius
-    bubble.scale = [_radius,_radius,_radius]
-
-
+    if bubble == None:
+        bubble = Bubble(_radius, (_x, _y ,0))
+    else:
+        bubble.set_pos((_x, _y, 0))
+        bubble.set_radius(_radius)
+        
     return bubble
 
 def bubbleFusing(b1, b2):
-    if isToClose(b1, b2):
+    if b1.isToClose(b2):
         b1.scale = (0,0,0)
-        b2.scale = (0,0,0)
-
-def isToClose(bubble1, bubble2):
-    s1_x = bubble1.location[0]
-    s1_y = bubble1.location[1]
-    s1_z = bubble1.location[2]
-    s2_x = bubble2.location[0]
-    s2_y = bubble2.location[1]
-    s2_z = bubble2.location[2]
-    return(sqrt((s1_x-s2_x)**2 + (s1_y-s2_y)**2 + (s1_z-s2_z)**2) < bubble1.scale[0] + bubble2.scale[0])
-    
-
-def distBetweenTwoSphere2D(s1,s2):
-    s1_x = s1[0]
-    s1_y = s1[1]
-    s1_z = s1[2]
-    s2_x = s2[0]
-    s2_y = s2[1]
-    s2_z = s2[2]
-    return sqrt((s1_x-s2_x)**2 + (s1_y-s2_y)**2)
+        b2.scale = (0,0,0)    
 
 
 def animateBubble(lstBubble=[]):
@@ -165,30 +177,29 @@ class MyBubblePanel(bpy.types.Panel):
     bl_idname = "OBJECT_PT_GenBubble"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Bubble"
+    bl_category = "Cnam"
 
     def draw(self, context):
         layout = self.layout
         layout.prop(context.scene, "bubble_count")
         layout.prop(context.scene, "bubble_size")
         layout.prop(context.scene, "bubble_range")
+        layout.operator("object.bubble_generation")
         row = layout.row()
         row.operator("object.bubble_reset")
-        row.operator("object.bubble_generation")
+        row.operator("object.bubble_validate")
 
 ## OPERATOR used as above descripbed panel button
 class Destructor(bpy.types.Operator):
     bl_idname = "object.bubble_reset"
-    bl_label = "Reset Scene"
+    bl_label = "Reset Bubble"
 
     def execute(self, context):
+        print(object_list)
         for i in range(len(object_list)):
             bubble = object_list[0]
-            try:
-                bpy.data.objects.remove(bubble)
-                object_list.remove(bubble)
-            except:
-                pass
+            bubble.delete()
+            object_list.remove(bubble)
         return {'FINISHED'}
 
 class BubbleBuilder(bpy.types.Operator):
@@ -198,6 +209,15 @@ class BubbleBuilder(bpy.types.Operator):
     def execute(self, context):
         _scene = bpy.context.scene
         createBubble(_scene['bubble_count'], _scene['bubble_size'], _scene['bubble_range'])
+        return {'FINISHED'}
+
+class Validate(bpy.types.Operator):
+    bl_idname = "object.bubble_validate"
+    bl_label = "Position Validate"
+
+    def execute(self, context):
+        for i in range(len(object_list)):
+            object_list.remove(object_list[0])
         return {'FINISHED'}
 
 def register():
@@ -226,7 +246,16 @@ def register():
     bpy.utils.register_class(MyBubblePanel)
     bpy.utils.register_class(Destructor)
     bpy.utils.register_class(BubbleBuilder)
+    bpy.utils.register_class(Validate)
+
+#def unregister():
+#
+#    bpy.utils.unregister_class(MyBubblePanel)
+#    bpy.utils.unregister_class(Destructor)
+#    bpy.utils.unregister_class(BubbleBuilder)
+#    bpy.utils.unregister_class(Validate)
 
 
 if __name__ == "__main__":
     register()
+      
