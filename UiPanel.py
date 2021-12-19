@@ -1,6 +1,9 @@
 import bpy
 import random as rd
-from math import cos, sin, sqrt, pi
+from math import cos, acos, sin, asin, sqrt, pi
+
+gravitational_const : float = 6.67 * 10**(-11)
+
 
 # Add a plane
 """
@@ -11,12 +14,26 @@ bpy.context.object.rigid_body.restitution = 0.8"""
 
 object_list = []
 
-class Bubble():
-    velocity : tuple[int, int, int]
+print("\n"*10)
+
+def debug(func):
+    def wrapper(*args, **kwargs):
+        print(f"# # # # # # # # #\n{func.__name__} have been call with {args}", end="")
+        result = func(*args, **kwargs)
+        print(f" and return {result}")
+        return result
+    return wrapper
+
+
+class Sphere():
+    velocity : tuple[float, float, float]
+    mass = 1
+    _massVol = 1_000_000
+    _volume : int
     
-    def __init__(self, radius : int, pos : tuple[int,int,int]):
+    def __init__(self, volume : int, pos : tuple[int,int,int]):
         bpy.ops.mesh.primitive_uv_sphere_add()
-        bpy.ops.rigidbody.object_add()
+        #bpy.ops.rigidbody.object_add()
         self.model = bpy.context.object
         
         self.model.location = bpy.context.scene.cursor.location
@@ -24,238 +41,278 @@ class Bubble():
         self.model.location[1] += pos[1]
         self.model.location[2] += pos[2]
         
-        self.model.scale = [radius, radius, radius]
+        self.set_volume(volume)
+        self._init_volume = volume
+
+        self.velocity = [(rd.random()-0.5)*volume/10 for i in range(3)]
+        self.velocity[2] /= 3
+        self._init_velocity = self.velocity
+    
+    def reset(self):
+        """since I can't set keyframe on this value, i need to reset it when computing animation"""
+        self.set_volume(self._init_volume)
+        self.velocity = self._init_velocity
+    
+
+    def computeAttrationInduceBy(self, sphere : 'Sphere'):
+        if self == sphere:
+            return
+        distanceBetween = self.distance_to(sphere)
+        srqt_dist = self.sqrt_distance_to(sphere)
+        force = ((gravitational_const * sphere.mass) / srqt_dist * sqrt(srqt_dist))
+
+        self.velocity_add(tuple(map(lambda dist : dist * force, distanceBetween)))
     
     def set_pos(self, pos : tuple[int,int,int]):
-        self.model.location[0] += pos[0]
-        self.model.location[1] += pos[1]
-        self.model.location[2] += pos[2]
-        
-    def set_radius(self, radius):
-        self.model.scale = [radius, radius, radius]
+        self.model.location[0] = pos[0]
+        self.model.location[1] = pos[1]
+        self.model.location[2] = pos[2]
     
-    def set_color(self, color):
-        self.model.color = color
+
+    def move_by(self, vel : tuple[float, float, float]):
+        self.model.location[0] += vel[0]
+        self.model.location[1] += vel[1]
+        self.model.location[2] += vel[2]
+        return self.model.location
+
+    def velocity_add(self, vector : tuple[float, float, float]):
+        self.velocity[0] += vector[0]
+        self.velocity[1] += vector[1]
+        self.velocity[2] += vector[2]
+        return self.velocity
         
-    def isToClose(self, bubble):
+    def _set_radius(self, radius):
+        self.model.scale = [radius/2, radius/2, radius/2]
+    
+    def set_color(self, referenceValue):
+        r = (self._volume - 1) / referenceValue
+        b = 1 - (self._volume - 1) / referenceValue
+        self.model.color = (r, 0, b, 1)
+    
+    def isToClose(self, sphere):
+        if self == sphere:
+            return
+        return (sqrt(self.sqrt_distance_to(sphere)) < self.model.scale[0] + sphere.model.scale[0])
+
+    def sqrt_distance_to(self, sphere):
         s1_x = self.model.location[0]
         s1_y = self.model.location[1]
         s1_z = self.model.location[2]
-        s2_x = bubble.model.location[0]
-        s2_y = bubble.model.location[1]
-        s2_z = bubble.model.location[2]
-        return(sqrt((s1_x-s2_x)**2 + (s1_y-s2_y)**2 + (s1_z-s2_z)**2) < self.model.scale[0] + bubble.model.scale[0])
+        s2_x = sphere.model.location[0]
+        s2_y = sphere.model.location[1]
+        s2_z = sphere.model.location[2]
+        return (s1_x-s2_x)**2 + (s1_y-s2_y)**2 + (s1_z-s2_z)**2
+
+    def distance_to(self, sphere):
+        s1_x = self.model.location[0]
+        s1_y = self.model.location[1]
+        s1_z = self.model.location[2]
+        s2_x = sphere.model.location[0]
+        s2_y = sphere.model.location[1]
+        s2_z = sphere.model.location[2]
+        return((s2_x - s1_x), (s2_y - s1_y), (s2_z - s1_z))
     
-    def computePos(self):
-        pass
+    def _set_mass_from_volume(self, volume):
+        self.mass = volume * self._massVol
+        def radiusFromVolume(volume):
+            return ((3*volume)/(4*pi))**(1/3)
+        self._set_radius(radiusFromVolume(volume))
+
+    def set_volume(self, volume):
+        self._volume = volume
+        self._set_mass_from_volume(volume)
+
+    def fuse_with(self, sphere):
+        s1 = self
+        s2 = sphere
+        if s1._volume < s2._volume:
+            s1, s2 = s2, s1
+        s1.set_volume(self._volume + sphere._volume)
+        s1.velocity = list(v * 0.8 for v in s1.velocity)
+        s2.set_volume(0)
 
     def delete(self):
         bpy.data.objects.remove(self.model)
-        
 
-        
-        
+    def __repr__(self):
+        return f"Sphere : [pos:{self.model.location}]"
 
-def createBubble(count, maxRadius, maxRange):
+def createSphere(count, maxVolume, maxRange):
 
     for i in range(count):    
-        bubble = generateGrowingBubble(maxRadius, maxRange, object_list)
-        if bubble:
-            object_list.append(bubble)
-        else:
-            print("Plus de place. "+str(len(object_list)) + " bulles on été générée")
-            break
-    #animateBubble(object_list)
+        progress : int = round((i/count) * 20)
+        sphere = generateGrowingSphere(maxVolume, maxRange, object_list)
+        if sphere:
+            object_list.append(sphere)
+            print(f"Sphere generation: [{'|'*(progress)}{' '*(20-progress)}] , {i+1}/{count}", end="\r")
+    print("\n"+str(len(object_list)) + " Spheres on été générée")
             
-def generateGrowingBubble(maxRadius, maxRange, lstBubble = []):
-    _maxTry = 200
+def generateGrowingSphere(maxVolume, maxRange, lstSphere = []):
+    _maxTry = 100
     _inc = 0
-    sphere = placeBubble(maxRadius, maxRange)
-    if len(lstBubble) != 0 :
+    new_sphere = placeSphere(maxVolume, maxRange)
+    if len(lstSphere) != 0 :
         isValide = False
         while not isValide and _inc < _maxTry:
             isValide = True
-            for bubble in lstBubble:
-                if sphere.isToClose(bubble):
+            for sphere in lstSphere:
+                if new_sphere.isToClose(sphere):
                     isValide = False
-                    sphere = placeBubble(maxRadius, maxRange, sphere)
+                    new_sphere = placeSphere(maxVolume, maxRange, new_sphere)
                     _inc += 1
-                    
-    r = (sphere.model.scale[0] - 1) / maxRadius
-    b = 1 - (sphere.model.scale[0] - 1) / maxRadius
-    sphere.set_color((r, 0, b, 1))
+                    break
     if _inc >= _maxTry:
         bpy.ops.object.delete()
-        sphere = None
+        new_sphere = None
+    new_sphere.set_color(maxVolume)
+    return new_sphere
+
+def placeSphere(maxWeight, maxRange, sphere = None):
+    _volume = rd.random() * (maxWeight - 1) + 1
+    _angle = rd.random() * 2 * pi
+    _dist = rd.random() * maxRange
+    _x = sin(_angle) * _dist
+    _y = cos(_angle) * _dist
+    
+    if sphere == None:
+        sphere = Sphere(_volume, (_x, _y ,0))
+    else:
+        sphere.set_pos((_x, _y, 0))
+        sphere.set_volume(_volume)
+        
     return sphere
 
-def placeBubble(maxRadius, maxRange, bubble = None):
-    _radius = rd.random()*(maxRadius-1)+1
-    _angle = rd.random()*2*pi
-    _dist = rd.random()*maxRange
-    _x = sin(_angle)*_dist
-    _y = cos(_angle)*_dist
-    
-    if bubble == None:
-        bubble = Bubble(_radius, (_x, _y ,0))
-    else:
-        bubble.set_pos((_x, _y, 0))
-        bubble.set_radius(_radius)
-        
-    return bubble
-
-def bubbleFusing(b1, b2):
-    if b1.isToClose(b2):
-        b1.scale = (0,0,0)
-        b2.scale = (0,0,0)    
-
-
-def animateBubble(lstBubble=[]):
-    # growing frames
-    maxFrame = 300
+def animateSphere(lstSphere=[]):
+    list_alive_sphere = lstSphere.copy()
+    maxFrame = bpy.context.scene.maxFrame
     bpy.context.scene.frame_end = maxFrame
-    step = 2
-    for f in range(0, maxFrame, step):
-        for bubble in lstBubble:
-            if bubble.location[2] + bubble.scale[0] >= 200 :
-                bubble.scale *= 0
-                bubble.keyframe_insert('scale', frame=f-step)
-                bubble.keyframe_insert('location', frame=f-step)
-            else:
-                bubble.scale *= 1 + 0.002 * step
-                bubble.location[2] *= 1 + 0.02 * step
-                bubble.keyframe_insert('location', frame=f)
-                bubble.keyframe_insert('scale', frame=f)
-            """for b in lstBubble:
-                if b != bubble:
-                    if isToClose(b, bubble):
-                        b.scale*=0.90
-                        bubble.scale*=1.05
-                        bubble.keyframe_insert('scale', frame=f)"""
+    step = 1
+    for frame in range(0, maxFrame, step):
+        frame_progress : int = round((frame/maxFrame) * 20)
+        bar1 = f"Sphere animation: [{'|'*(frame_progress)}{' '*(20-frame_progress)}]"
+        list_dead_sphere = []
+        for i, sphere in enumerate(list_alive_sphere):
+            if frame == 0:
+                sphere.reset()
+            alive_progress : int = round((i+1)/len(list_alive_sphere) * 20)
+            bar2 = f"{bar1}[{'|'*(alive_progress)}{' '*(20-alive_progress)}]"
+            if sphere._volume == 0:
+                list_dead_sphere.append(sphere)
+                continue
+            sphere.model.keyframe_insert('scale', frame=frame)
+            for j, other_sphere in enumerate(list_alive_sphere):
+                others_progress : int = round(((j+1)/len(list_alive_sphere)) * 20)
+                print(f"{bar2}[{'|'*(others_progress)}{' '*(20-others_progress)}] {frame+1}/{maxFrame} {len(list_alive_sphere)}>{j+1}>{i+1}", ' '*5, end="\r")
+                if sphere.isToClose(other_sphere):
+                    sphere.fuse_with(other_sphere)
+                    sphere.model.keyframe_insert('scale', frame=frame)
+                    other_sphere.model.keyframe_insert('scale', frame=frame)
 
-def isBiggerBubble(b1,b2):
-    return b1 if b1.scale > b2.scale else b2
-
-
-# Not use yet
-def createTentacle(nbCube=7, firstCubeSize=3, lastCubeSize=0.5, firstColor=[1,1,1,1], lastColor=[0,0,0,1], eulerAngle=[0,0,0]):
-    offset = firstCubeSize/2
-    parent = None
-    for i in range (nbCube):
-        #size
-        size = firstCubeSize - (firstCubeSize - lastCubeSize)*i/(nbCube-1)
-        #color
-        color = firstColor
-        for j in range(4):
-            color[j] = firstColor[j] - (firstColor[j] - lastColor[j])*i/(nbCube-1)
-        
-        #color = [
-        #    firstColor[j] - (firstColor[j] - lastColor[j])*i/(nbCube-1)
-        #    for j in range(4)
-        #]
-        #angle
-        
-        #set
-        bpy.ops.mesh.primitive_cube_add(size=size, location=(0, 0, size if i!=0 else size/2))
-        cube = bpy.context.object
-        cube.color = color
-        if i != 0 :
-            cube.rotation_euler = eulerAngle
-            cube.parent = parent
-        parent = cube
-        offset = size
+                sphere.computeAttrationInduceBy(other_sphere)
+                
+            sphere.model.keyframe_insert('location', frame=frame)
+            sphere.move_by(sphere.velocity)
+        for sphere in list_dead_sphere:
+            list_alive_sphere.remove(sphere)
+    print()
 
 ### above are functionnal methods description
 ### below are Panel and interaction button description
 
 
 ## PANEL definition
-class MyBubblePanel(bpy.types.Panel):
-    """Creates a Panel for generate Bubbles"""
+class MySpherePanel(bpy.types.Panel):
+    """Creates a Panel for generate Spheres"""
     
-    bl_label = "Bubble Panel"
-    bl_idname = "OBJECT_PT_GenBubble"
+    #bl_label = "Sphere Panel"
+    bl_label = "Johan Guerrero Panel"
+    bl_idname = "OBJECT_PT_GenSphere"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Cnam"
+    bl_category = "cnam"
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(context.scene, "bubble_count")
-        layout.prop(context.scene, "bubble_size")
-        layout.prop(context.scene, "bubble_range")
-        layout.operator("object.bubble_generation")
+        layout.prop(context.scene, "sphere_count")
+        layout.prop(context.scene, "sphere_size")
+        layout.prop(context.scene, "sphere_range")
         row = layout.row()
-        row.operator("object.bubble_reset")
-        row.operator("object.bubble_validate")
+        row.operator("object.sphere_generation")
+        row.operator("object.sphere_reset")
+        #layout.operator("object.sphere_validate")
+        
+        layout.prop(context.scene, "maxFrame")
+        layout.operator("object.sphere_animation")
 
-## OPERATOR used as above descripbed panel button
+## OPERATOR used in above descripted panel
 class Destructor(bpy.types.Operator):
-    bl_idname = "object.bubble_reset"
-    bl_label = "Reset Bubble"
+    bl_idname = "object.sphere_reset"
+    bl_label = "Reset Sphere"
 
     def execute(self, context):
-        print(object_list)
         for i in range(len(object_list)):
-            bubble = object_list[0]
-            bubble.delete()
-            object_list.remove(bubble)
+            sphere = object_list[0]
+            object_list.remove(sphere)
+            sphere.delete()
         return {'FINISHED'}
 
-class BubbleBuilder(bpy.types.Operator):
-    bl_idname = "object.bubble_generation"
+class SphereBuilder(bpy.types.Operator):
+    bl_idname = "object.sphere_generation"
     bl_label = "Generate"
 
     def execute(self, context):
         _scene = bpy.context.scene
-        createBubble(_scene['bubble_count'], _scene['bubble_size'], _scene['bubble_range'])
+        createSphere(_scene['sphere_count'], _scene['sphere_size'], _scene['sphere_range'])
         return {'FINISHED'}
 
-class Validate(bpy.types.Operator):
-    bl_idname = "object.bubble_validate"
-    bl_label = "Position Validate"
+class SphereAnimator(bpy.types.Operator):
+    bl_idname = "object.sphere_animation"
+    bl_label = "Animate"
 
     def execute(self, context):
-        for i in range(len(object_list)):
-            object_list.remove(object_list[0])
+        for sphere in bpy.data.objects:
+            sphere.animation_data_clear()
+        animateSphere(object_list)
         return {'FINISHED'}
 
 def register():
 
-    # Register a new scene property used for instanciate bubbles
-    bpy.types.Scene.bubble_count = bpy.props.IntProperty(
+    # Register a new scene property used for instanciate spheres
+    bpy.types.Scene.sphere_count = bpy.props.IntProperty(
         name="Instances",
-        description="Nombre de bulles",
+        description="Nombre de spheres",
         min=1, max=1000,
         default=30,
     )
-    bpy.types.Scene.bubble_size = bpy.props.FloatProperty(
-        name="Radius",
-        description="Rayon max d'une bulle",
+    bpy.types.Scene.sphere_size = bpy.props.FloatProperty(
+        name="Volume",
+        description="Volume maximun d'une sphere",
         min=1, max=100,
         default=5,
     )
-    bpy.types.Scene.bubble_range = bpy.props.FloatProperty(
+    bpy.types.Scene.sphere_range = bpy.props.FloatProperty(
         name="Range",
         description="Distance maximun du curseur",
         min=1, max=300,
         default=30,
     )
-    # count, maxRadius, maxRange
+    bpy.types.Scene.maxFrame = bpy.props.IntProperty(
+        name="Frame count",
+        description="Nombre de frame maximum",
+        min=1, max=10000,
+        default=1000,
+    )
+    # count, maxVolume, maxRange
 
-    bpy.utils.register_class(MyBubblePanel)
+    bpy.context.scene.sphere_count = 50
+    bpy.context.scene.sphere_size = 30
+    bpy.context.scene.sphere_range = 200
+    bpy.context.scene.maxFrame = 500
+
+    bpy.utils.register_class(MySpherePanel)
     bpy.utils.register_class(Destructor)
-    bpy.utils.register_class(BubbleBuilder)
-    bpy.utils.register_class(Validate)
-
-#def unregister():
-#
-#    bpy.utils.unregister_class(MyBubblePanel)
-#    bpy.utils.unregister_class(Destructor)
-#    bpy.utils.unregister_class(BubbleBuilder)
-#    bpy.utils.unregister_class(Validate)
-
+    bpy.utils.register_class(SphereBuilder)
+    bpy.utils.register_class(SphereAnimator)
 
 if __name__ == "__main__":
     register()
-      
