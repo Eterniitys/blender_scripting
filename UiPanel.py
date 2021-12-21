@@ -36,7 +36,7 @@ class Sphere():
         #bpy.ops.rigidbody.object_add()
         self.model = bpy.context.object
         
-        self.model.location = bpy.context.scene.cursor.location
+        self.model.location = bpy.context.scene.cursor.location.copy()
         self.model.location[0] += pos[0]
         self.model.location[1] += pos[1]
         self.model.location[2] += pos[2]
@@ -44,9 +44,9 @@ class Sphere():
         self.set_volume(volume)
         self._init_volume = volume
 
-        self.velocity = [(rd.random()-0.5)*volume/10 for i in range(3)]
-        self.velocity[2] /= 3
-        self._init_velocity = self.velocity
+        self.velocity = [0,0,0]
+        self._set_initial_velocity(volume)
+
     
     def reset(self):
         """since I can't set keyframe on this value, i need to reset it when computing animation"""
@@ -57,8 +57,10 @@ class Sphere():
     def computeAttrationInduceBy(self, sphere : 'Sphere'):
         if self == sphere:
             return
-        distanceBetween = self.distance_to(sphere)
         srqt_dist = self.sqrt_distance_to(sphere)
+        if srqt_dist == 0:
+            return
+        distanceBetween = self.distance_to(sphere)
         force = ((gravitational_const * sphere.mass) / srqt_dist * sqrt(srqt_dist))
 
         self.velocity_add(tuple(map(lambda dist : dist * force, distanceBetween)))
@@ -118,6 +120,23 @@ class Sphere():
             return ((3*volume)/(4*pi))**(1/3)
         self._set_radius(radiusFromVolume(volume))
 
+    def _set_initial_velocity(self, volume):
+        relative_pos = bpy.context.scene.cursor.location.copy()
+        relative_pos[0] -= self.model.location[0]
+        relative_pos[1] -= self.model.location[1]
+        generated_velocity : double = rd.random()* 10 * volume / sqrt(relative_pos[0]**2 + relative_pos[1]**2)
+        if(relative_pos[0] >= 0):
+            self.velocity[1] = generated_velocity
+        else:
+            self.velocity[1] = -generated_velocity
+        if(relative_pos[1] >= 0):
+            self.velocity[0] = -generated_velocity
+        else:
+            self.velocity[0] = generated_velocity
+        self.velocity[2] = rd.random() * 0.5 - 0.5 
+        
+        self._init_velocity = self.velocity
+
     def set_volume(self, volume):
         self._volume = volume
         self._set_mass_from_volume(volume)
@@ -130,6 +149,7 @@ class Sphere():
         s1.set_volume(self._volume + sphere._volume)
         s1.velocity = list(v * 0.8 for v in s1.velocity)
         s2.set_volume(0)
+        s2.set_pos((0, 0, 0))
 
     def delete(self):
         bpy.data.objects.remove(self.model)
@@ -161,10 +181,10 @@ def generateGrowingSphere(maxVolume, maxRange, lstSphere = []):
                     new_sphere = placeSphere(maxVolume, maxRange, new_sphere)
                     _inc += 1
                     break
+    new_sphere.set_color(maxVolume)
     if _inc >= _maxTry:
         bpy.ops.object.delete()
         new_sphere = None
-    new_sphere.set_color(maxVolume)
     return new_sphere
 
 def placeSphere(maxWeight, maxRange, sphere = None):
@@ -207,6 +227,8 @@ def animateSphere(lstSphere=[]):
                     sphere.fuse_with(other_sphere)
                     sphere.model.keyframe_insert('scale', frame=frame)
                     other_sphere.model.keyframe_insert('scale', frame=frame)
+                    sphere.model.keyframe_insert('location', frame=frame)
+                    other_sphere.model.keyframe_insert('location', frame=frame)
 
                 sphere.computeAttrationInduceBy(other_sphere)
                 
@@ -293,7 +315,7 @@ def register():
     bpy.types.Scene.sphere_range = bpy.props.FloatProperty(
         name="Range",
         description="Distance maximun du curseur",
-        min=1, max=300,
+        min=1, max=1000,
         default=30,
     )
     bpy.types.Scene.maxFrame = bpy.props.IntProperty(
